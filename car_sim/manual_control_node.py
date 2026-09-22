@@ -16,8 +16,8 @@ class ManualControlNode(Node):
     def __init__(self):
         super().__init__('manual_control_node')
         self.declare_parameter('publish_rate', 20.0)
-        self.declare_parameter('window_width', 1000)
-        self.declare_parameter('window_height', 1000)
+        self.declare_parameter('window_width', 800)
+        self.declare_parameter('window_height', 600)
 
         self.publish_rate = self.get_parameter('publish_rate').value
         self.window_width = self.get_parameter('window_width').value

@@ -11,3 +11,10 @@ log/
 # editors
 .vscode/
 *.swp
+
+# test/debug artifacts
+scratch/
+.pytest_cache/
+
+# OS
+.DS_Store

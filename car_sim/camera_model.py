@@ -46,7 +46,7 @@ class PinholeCamera:
         t = -R @ cam_pos
         return R, t
 
-    def project(self, points_world, car_x, car_y, car_yaw, near=0.5):
+    def project(self, points_world, car_x, car_y, car_yaw, near=0.05):
         """Project Nx3 world points to pixel coords.
 
         Returns (pixels Nx2 float array, valid Nx bool array). Points behind
@@ -62,3 +62,10 @@ class PinholeCamera:
         v = self.fy * (cam_pts[:, 1] / safe_depth) + self.cy
         pixels = np.stack([u, v], axis=1)
         return pixels, valid
+
+    def project_camera_points(self, cam_pts):
+        """Project already-camera-space points (Nx3, z assumed > 0) to pixel coords."""
+        depth = cam_pts[:, 2]
+        u = self.fx * (cam_pts[:, 0] / depth) + self.cx
+        v = self.fy * (cam_pts[:, 1] / depth) + self.cy
+        return np.stack([u, v], axis=1)

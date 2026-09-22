@@ -29,8 +29,8 @@ def generate_launch_description():
         name='manual_control_node',
         output='screen',
         parameters=[{
-            'window_width': 1000,
-            'window_height': 1000,
+            'window_width': 800,
+            'window_height': 600,
             'publish_rate': 20.0,
         }],
     )
