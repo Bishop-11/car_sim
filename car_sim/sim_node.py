@@ -41,6 +41,7 @@ class SimNode(Node):
 
         self.control = 'straight'
         self.game_over = False
+        self._frozen_frames = None
 
         self.camera_pub = self.create_publisher(Image, '/car/camera/image_raw', 10)
         self.topdown_pub = self.create_publisher(Image, '/car/topdown/image_raw', 10)
@@ -59,7 +60,7 @@ class SimNode(Node):
         p('car_speed', 5.0)
         p('yaw_rate', 1.0)
         p('road_seed', 42)
-        p('road_width', 6.0)
+        p('road_width', 9.0)
         p('waypoint_spacing', 0.5)
         p('segment_length', 40.0)
         p('max_curvature', 0.02)
@@ -76,8 +77,8 @@ class SimNode(Node):
         p('topdown_width_px', 500)
         p('topdown_height_px', 500)
         p('topdown_scale', 6.0)
-        p('chase_width_px', 500)
-        p('chase_height_px', 500)
+        p('chase_width_px', 1000)
+        p('chase_height_px', 1000)
         p('chase_scale', 8.0)
         p('chase_forward_offset_m', -6.0)
 
@@ -117,13 +118,21 @@ class SimNode(Node):
         self.car.reset()
         self.game_over = False
         self.control = 'straight'
+        self._frozen_frames = None
         response.success = True
         response.message = 'reset'
         self.get_logger().info('Simulation reset')
         return response
 
     def _tick(self):
-        if not self.game_over:
+        if self.game_over:
+            # Frozen: no kinematics, no road generation, no re-rendering -
+            # just republish the single cached game-over frame so late
+            # subscribers still see current state.
+            if self._frozen_frames is None:
+                self._frozen_frames = self._render_frames(game_over=True)
+            cam_img, top_img, chase_img = self._frozen_frames
+        else:
             self.car.step(self.control, self.car_speed, self.yaw_rate, self.dt)
             self.road.update(self.car.distance_traveled)
             offset = self.road.lateral_offset(self.car.x, self.car.y)
@@ -131,8 +140,21 @@ class SimNode(Node):
                 self.game_over = True
                 self.get_logger().warn('Car went off road - game over')
 
-        stamp = self.get_clock().now().to_msg()
+            cam_img, top_img, chase_img = self._render_frames(
+                game_over=self.game_over)
+            if self.game_over:
+                self._frozen_frames = (cam_img, top_img, chase_img)
 
+        stamp = self.get_clock().now().to_msg()
+        self._publish_image(self.camera_pub, cam_img, stamp, 'car_camera')
+        self._publish_image(self.topdown_pub, top_img, stamp, 'world')
+        self._publish_image(self.chase_pub, chase_img, stamp, 'car_chase')
+
+        go_msg = Bool()
+        go_msg.data = self.game_over
+        self.game_over_pub.publish(go_msg)
+
+    def _render_frames(self, game_over):
         cam_img = renderer.render_camera(
             self.car, self.road, self.camera,
             self.cam_width, self.cam_height, self.cam_render_distance)
@@ -143,14 +165,11 @@ class SimNode(Node):
             self.car, self.road, self.chase_width_px, self.chase_height_px,
             self.chase_scale, rotate_with_car=True,
             forward_offset_m=self.chase_forward_offset_m)
-
-        self._publish_image(self.camera_pub, cam_img, stamp, 'car_camera')
-        self._publish_image(self.topdown_pub, top_img, stamp, 'world')
-        self._publish_image(self.chase_pub, chase_img, stamp, 'car_chase')
-
-        go_msg = Bool()
-        go_msg.data = self.game_over
-        self.game_over_pub.publish(go_msg)
+        if game_over:
+            cam_img = renderer.draw_game_over_overlay(cam_img)
+            top_img = renderer.draw_game_over_overlay(top_img)
+            chase_img = renderer.draw_game_over_overlay(chase_img)
+        return cam_img, top_img, chase_img
 
     def _publish_image(self, pub, img_bgr, stamp, frame_id):
         msg = self.bridge.cv2_to_imgmsg(img_bgr, encoding='bgr8')

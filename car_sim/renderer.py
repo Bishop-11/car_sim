@@ -89,6 +89,27 @@ def render_topdown(car, road, width_px=500, height_px=500, scale=6.0,
     return img
 
 
+def draw_game_over_overlay(img):
+    """Return a copy of img with a 'GAME OVER' banner drawn over the middle."""
+    out = img.copy()
+    h, w = out.shape[:2]
+
+    band_h = int(h * 0.22)
+    y0, y1 = h // 2 - band_h // 2, h // 2 + band_h // 2
+    band = out.copy()
+    cv2.rectangle(band, (0, y0), (w, y1), (0, 0, 0), -1)
+    cv2.addWeighted(band, 0.55, out, 0.45, 0, out)
+
+    text = "GAME OVER"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = w / 400.0
+    thickness = max(2, int(round(scale * 2)))
+    (tw, th), _ = cv2.getTextSize(text, font, scale, thickness)
+    tx, ty = (w - tw) // 2, h // 2 + th // 2
+    cv2.putText(out, text, (tx, ty), font, scale, (0, 0, 255), thickness, cv2.LINE_AA)
+    return out
+
+
 def render_camera(car, road, camera, width_px, height_px, render_distance=80.0):
     """Render the front-facing perspective camera view via pinhole projection."""
     img = np.empty((height_px, width_px, 3), dtype=np.uint8)
