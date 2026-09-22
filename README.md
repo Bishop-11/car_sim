@@ -34,6 +34,15 @@ messages. An automatic controller (PID, RL, ...) is just another node that
 subscribes to `/car/camera/image_raw` and publishes `/car/control` — no
 changes to `sim_node` needed.
 
+## Example output
+
+The two published views, mid-drive on a curve (rendered with the default
+params in `config/sim_params.yaml`):
+
+| `/car/camera/image_raw` (front camera, for lane detection) | `/car/chase/image_raw` (game view) |
+|---|---|
+| ![camera feed](docs/camera_view.png) | ![chase/game view](docs/chase_view.png) |
+
 ## Nodes
 
 | Node | Runs when | Does |
