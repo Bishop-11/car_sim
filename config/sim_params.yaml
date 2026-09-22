@@ -1,0 +1,29 @@
+sim_node:
+  ros__parameters:
+    car_speed: 5.0            # m/s, constant forward speed (difficulty knob)
+    yaw_rate: 1.0              # rad/s applied while turning left/right
+    road_seed: 42               # deterministic road; override per run/episode
+    road_width: 6.0
+    waypoint_spacing: 0.5
+    segment_length: 40.0        # meters between new curvature targets
+    max_curvature: 0.02         # 1/m, curvature sampling range (~50m min turn radius)
+    curvature_rate: 0.01        # max curvature change per meter (smoothness)
+    lookahead: 150.0            # meters of road kept generated ahead of the car
+    keep_behind: 20.0           # meters of road kept generated behind the car
+    tick_rate: 20.0             # Hz
+
+    camera_width: 320
+    camera_height: 240
+    camera_hfov_deg: 90.0
+    camera_mount_height: 1.2    # meters
+    camera_pitch_deg: 12.0      # tilt down from horizontal
+    camera_render_distance: 50.0
+
+    topdown_width_px: 500
+    topdown_height_px: 500
+    topdown_scale: 6.0          # pixels per meter
+
+    chase_width_px: 500
+    chase_height_px: 500
+    chase_scale: 8.0            # pixels per meter
+    chase_forward_offset_m: -6.0  # negative = camera anchor behind the car
