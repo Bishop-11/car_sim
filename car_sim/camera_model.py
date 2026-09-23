@@ -3,10 +3,11 @@ import numpy as np
 
 
 class PinholeCamera:
-    """Forward-facing pinhole camera rigidly mounted on the car.
-
-    Mounted at a fixed height above the car's (x, y) position, tilted down
-    by `pitch_deg` from horizontal, yawed with the car's heading.
+    """A forward-looking pinhole camera, tilted down by `pitch_deg` from
+    horizontal. `extrinsics()` mounts it directly on the car (at the car's
+    x,y and this camera's mount_height, yawed with the car); `extrinsics_at()`
+    places it at an arbitrary world pose instead, e.g. pulled back and raised
+    for a third-person chase view.
     """
 
     def __init__(self, width_px, height_px, hfov_deg, mount_height, pitch_deg):
@@ -25,11 +26,16 @@ class PinholeCamera:
             max(0, min(height_px, self.cy - self.fy * math.tan(self.pitch)))))
 
     def extrinsics(self, car_x, car_y, car_yaw):
-        """Rotation/translation mapping a world point p to camera frame: p_cam = R @ p + t.
+        """Extrinsics for the camera mounted directly on the car (at the
+        car's own x,y, at this camera's mount_height)."""
+        return self.extrinsics_at(car_x, car_y, self.mount_height, car_yaw)
+
+    def extrinsics_at(self, cam_x, cam_y, cam_z, yaw):
+        """Rotation/translation mapping a world point p to camera frame: p_cam = R @ p + t,
+        for a camera at an arbitrary world position (cam_x, cam_y, cam_z) yawed by `yaw`.
 
         Camera frame follows OpenCV convention: X-right, Y-down, Z-forward.
         """
-        yaw = car_yaw
         pitch = self.pitch
         forward = np.array([
             math.cos(yaw) * math.cos(pitch),
@@ -42,7 +48,7 @@ class PinholeCamera:
         y_cam = np.cross(forward, x_cam)  # "down" in camera frame
 
         R = np.stack([x_cam, y_cam, forward], axis=0)
-        cam_pos = np.array([car_x, car_y, self.mount_height])
+        cam_pos = np.array([cam_x, cam_y, cam_z])
         t = -R @ cam_pos
         return R, t
 
