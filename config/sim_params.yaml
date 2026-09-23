@@ -1,10 +1,12 @@
 sim_node:
   ros__parameters:
-    yaw_rate: 2.0              # rad/s, max turn rate (speed-independent - unrealistic at high speed, fine at low/moderate)
-    max_accel: 10.0            # m/s^2, up-arrow acceleration
-    max_decel: 20.0            # m/s^2, down-arrow braking (stronger than accel)
-    friction_decel: 5.0        # m/s^2, passive coast-down with no throttle input
-    max_speed: 30.0            # m/s
+    wheelbase: 2.7              # meters, front-to-rear axle distance
+    max_steer_angle_deg: 35.0   # degrees, front wheel limit
+    max_lat_accel: 14.71       # m/s^2, tire grip limit (~1.5 g), caps omega at speed
+    max_accel: 5.0             # m/s^2, up-arrow acceleration
+    max_decel: 10.0            # m/s^2, down-arrow braking (stronger than accel)
+    friction_decel: 2.0        # m/s^2, passive coast-down with no throttle input
+    max_speed: 50.0            # m/s
     road_seed: 42               # deterministic road; override per run/episode
     road_width: 16.2
     waypoint_spacing: 0.5

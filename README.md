@@ -99,22 +99,38 @@ arc-length from the road's start (`s=0`).
 
 ### `car_model.py` — `CarState`
 
-A point-mass kinematic car — no wheels, no tire/grip model, no wheelbase.
-**Both yaw and speed are real integrated state**, each driven by its own
-continuous command every tick:
+A **kinematic bicycle-model** car: a rigid body with a `wheelbase`, front
+wheels that steer, rear wheels that only roll (no sideways slip) — the
+standard model used throughout self-driving/robotics literature (it's what's
+behind controllers like Stanley/Pure Pursuit). **Both yaw and speed are real
+integrated state**, each driven by its own continuous command every tick:
 
 **Steering → yaw** (`steering` in `[-1, 1]`, clamped):
 ```
-omega = -steering * yaw_rate      # yaw_rate = the car's max turn rate (rad/s)
-yaw  += omega * dt
+delta      = -steering * max_steer_angle       # front-wheel angle (radians)
+omega_raw  = (speed / wheelbase) * tan(delta)   # turn rate - NOT commanded directly
+lat_accel  = speed * omega_raw
+if |lat_accel| > max_lat_accel:                 # tire grip limit (~1.5 g default)
+    omega = max_lat_accel / speed  (same sign)  # capped: tires would slide first
+else:
+    omega = omega_raw
+yaw += omega * dt
 ```
-This is a direct proportional throttle on turn rate — half steering gives
-exactly half the yaw rate of full lock. Turn rate is **independent of
-speed** here (unlike a real car, where a given steering angle produces a
-speed-dependent turn rate via wheelbase geometry) — worth knowing if you push
-`yaw_rate` and `max_speed` both high: at high speed a large turn rate implies
-unrealistic lateral acceleration (`v * omega`), since this model has no
-tire-grip limit to cap it. Fine for an arcade feel; not a physics simulator.
+Two things this fixes over a naive "yaw rate = steering command" model:
+1. **At `speed == 0`, `omega == 0` regardless of steering.** Turning the
+   wheel while parked doesn't spin the car — you have to be rolling, same as
+   a real car. (An earlier, simpler version of this sim commanded omega
+   directly, independent of speed, which let the car visibly rotate in
+   place while stationary — physically wrong, and this is the fix.)
+2. **`omega` is capped by `max_lat_accel`.** The raw formula above has no
+   speed limit built in — at high speed a full-lock turn would imply
+   unrealistic lateral g-forces (tens of g at highway speed) since nothing
+   stops `omega` from scaling with speed. Real tires only generate so much
+   sideways force before sliding, which is what actually limits a real car's
+   turn rate at speed; `max_lat_accel` models that limit directly. This also
+   means turning noticeably "weakens" at high speed by design — a wide,
+   gentle arc at high speed and a tight turn at low speed are both the grip
+   cap doing its job, not a bug.
 
 **Throttle → speed** (`throttle` in `[-1, 1]`, clamped):
 ```
@@ -278,7 +294,7 @@ topics publish every tick unconditionally, regardless of what's driving.
 
 | Group | Params |
 |---|---|
-| Car physics | `yaw_rate` (rad/s, max turn rate), `max_accel`, `max_decel`, `friction_decel` (m/s²), `max_speed` (m/s) |
+| Car physics | `wheelbase` (m), `max_steer_angle_deg`, `max_lat_accel` (m/s², tire grip limit), `max_accel`, `max_decel`, `friction_decel` (m/s²), `max_speed` (m/s) |
 | Road | `road_seed`, `road_width`, `waypoint_spacing`, `segment_length`, `max_curvature`, `curvature_rate`, `lookahead`, `keep_behind`, `straight_start_m` |
 | Poles / dashes | `pole_spacing`, `pole_side_offset`, `pole_height`, `lane_dash_length`, `lane_dash_gap` |
 | Sim | `tick_rate` (Hz) |
@@ -286,13 +302,24 @@ topics publish every tick unconditionally, regardless of what's driving.
 | Player view | `player_width_px`, `player_height_px`, `player_hfov_deg`, `player_pitch_deg`, `player_cam_height`, `player_back_offset` (meters behind the car), `player_render_distance` |
 | Map/chase view | `chase_width_px`, `chase_height_px`, `chase_scale` (px/m), `chase_car_x_frac`, `chase_car_y_frac` (car's position as a *fraction* of the canvas, so the whole layout scales seamlessly if you resize the canvas) |
 
-Current defaults for the car-physics group, as a feel reference:
-`yaw_rate=2.0 rad/s`, `max_accel=10.0 m/s²`, `max_decel=20.0 m/s²`,
-`friction_decel=5.0 m/s²`, `max_speed=30.0 m/s`. Note `yaw_rate` and
-`max_speed` interact (see the car_model.py section above) — pushing both
-high at once starts implying unrealistic lateral acceleration, since this
-model has no grip limit to cap it. That's a deliberate simplification for
-now, not an oversight.
+Current defaults for the car-physics group, chosen to sit in realistic
+road-car ranges (with real-world reference values alongside):
+
+| Param | Default | ≈ g | Realistic road-car range |
+|---|---|---|---|
+| `wheelbase` | 2.7 m | — | 2.5–2.8 m (typical sedan) |
+| `max_steer_angle_deg` | 35° | — | ~30–35° typical front-wheel lock |
+| `max_lat_accel` | 14.71 m/s² | 1.5 g | 0.8–1.0 g (road tires) – 1.5 g+ (sticky/track tires); this is on the grippy side, deliberately, for a more responsive high-speed feel |
+| `max_accel` | 5.0 m/s² | 0.5 g | 2.5–4 m/s² (average car) – up to ~9-10 m/s² (quick EV/sports car); 5.0 sits mid-pack, plausible for a sporty car |
+| `max_decel` | 10.0 m/s² | 1.0 g | 8–10 m/s² (road car max braking) |
+| `friction_decel` | 2.0 m/s² | 0.2 g | 0.5–1.5 m/s² (pure rolling resistance/drag); 2.0 is slightly brisk but plausible with some engine braking included |
+| `max_speed` | 50.0 m/s | — | 180 km/h — a fast highway/Autobahn-ish top speed |
+
+`max_lat_accel` and `max_speed` still interact (see the car_model.py section
+above): even with a realistic grip limit, high speed inherently means wide,
+gentle turns rather than tight ones — that's the physically-correct
+trade-off the grip cap enforces, not a bug to fix by raising the cap
+further.
 
 `manual_control_node` has its own params (set via `declare_parameter`
 defaults, not in this yaml): `publish_rate`, `window_width`, `window_height`,

@@ -1,3 +1,5 @@
+import math
+
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -54,8 +56,17 @@ class SimNode(Node):
             pole_spacing=self.pole_spacing, pole_side_offset=self.pole_side_offset,
             lane_dash_length=self.lane_dash_length, lane_dash_gap=self.lane_dash_gap)
         self.car = CarState(
-            yaw_rate=self.yaw_rate, max_accel=self.max_accel, max_decel=self.max_decel,
+            wheelbase=self.wheelbase, max_steer_angle=math.radians(self.max_steer_angle_deg),
+            max_lat_accel=self.max_lat_accel, max_accel=self.max_accel, max_decel=self.max_decel,
             friction_decel=self.friction_decel, max_speed=self.max_speed)
+        # Peak achievable |omega| given the wheelbase/steering/grip limits -
+        # used only as the HUD gauge's display range (omega itself still
+        # comes straight from CarState each tick, this is just a sensible
+        # full-scale for the bar). Occurs where the raw bicycle-model omega
+        # equals the grip-limited omega: v* = sqrt(max_lat_accel*L/tan(delta_max)).
+        delta_max = math.radians(self.max_steer_angle_deg)
+        self.omega_display_range = math.sqrt(
+            self.max_lat_accel * math.tan(delta_max) / self.wheelbase)
         self.camera = PinholeCamera(
             self.cam_width, self.cam_height, self.cam_hfov_deg,
             self.cam_mount_height, self.cam_pitch_deg)
@@ -87,11 +98,13 @@ class SimNode(Node):
 
     def _declare_params(self):
         p = self.declare_parameter
-        p('yaw_rate', 2.0)
-        p('max_accel', 10.0)       # m/s^2, up-arrow acceleration
-        p('max_decel', 20.0)       # m/s^2, down-arrow braking (stronger than accel)
-        p('friction_decel', 5.0)   # m/s^2, passive coast-down with no throttle input
-        p('max_speed', 30.0)       # m/s
+        p('wheelbase', 2.7)         # meters, front-to-rear axle distance
+        p('max_steer_angle_deg', 35.0)  # degrees, front wheel limit
+        p('max_lat_accel', 14.71)  # m/s^2, tire grip limit (~1.5 g), caps omega at speed
+        p('max_accel', 5.0)        # m/s^2, up-arrow acceleration
+        p('max_decel', 10.0)       # m/s^2, down-arrow braking (stronger than accel)
+        p('friction_decel', 2.0)   # m/s^2, passive coast-down with no throttle input
+        p('max_speed', 50.0)       # m/s
         p('road_seed', 42)
         p('road_width', 16.2)
         p('waypoint_spacing', 0.5)
@@ -128,7 +141,9 @@ class SimNode(Node):
 
     def _load_params(self):
         g = lambda name: self.get_parameter(name).value  # noqa: E731
-        self.yaw_rate = g('yaw_rate')
+        self.wheelbase = g('wheelbase')
+        self.max_steer_angle_deg = g('max_steer_angle_deg')
+        self.max_lat_accel = g('max_lat_accel')
         self.max_accel = g('max_accel')
         self.max_decel = g('max_decel')
         self.friction_decel = g('friction_decel')
@@ -238,7 +253,7 @@ class SimNode(Node):
             throttle=self.throttle, accel=self.car.accel,
             max_accel=self.max_accel, max_decel=self.max_decel,
             speed=self.car.speed, max_speed=self.max_speed,
-            steering=self.steering, omega=self.car.omega, max_omega=self.yaw_rate,
+            steering=self.steering, omega=self.car.omega, max_omega=self.omega_display_range,
             yaw=self.car.yaw,
             distance_traveled=self.car.distance_traveled,
             target_distance=self.finish_distance_m, elapsed_s=self.elapsed_s)
