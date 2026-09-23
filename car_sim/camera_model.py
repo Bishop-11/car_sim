@@ -2,6 +2,37 @@ import math
 import numpy as np
 
 
+def quaternion_from_matrix(R):
+    """Rotation matrix (3,3) -> quaternion (x, y, z, w). Standard robust
+    (Shepperd's) method - safe for any rotation, not just small angles."""
+    trace = R[0, 0] + R[1, 1] + R[2, 2]
+    if trace > 0.0:
+        s = 0.5 / math.sqrt(trace + 1.0)
+        w = 0.25 / s
+        x = (R[2, 1] - R[1, 2]) * s
+        y = (R[0, 2] - R[2, 0]) * s
+        z = (R[1, 0] - R[0, 1]) * s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+        w = (R[2, 1] - R[1, 2]) / s
+        x = 0.25 * s
+        y = (R[0, 1] + R[1, 0]) / s
+        z = (R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = 2.0 * math.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+        w = (R[0, 2] - R[2, 0]) / s
+        x = (R[0, 1] + R[1, 0]) / s
+        y = 0.25 * s
+        z = (R[1, 2] + R[2, 1]) / s
+    else:
+        s = 2.0 * math.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+        w = (R[1, 0] - R[0, 1]) / s
+        x = (R[0, 2] + R[2, 0]) / s
+        y = (R[1, 2] + R[2, 1]) / s
+        z = 0.25 * s
+    return x, y, z, w
+
+
 class PinholeCamera:
     """A forward-looking pinhole camera, tilted down by `pitch_deg` from
     horizontal. `extrinsics()` mounts it directly on the car (at the car's
@@ -75,3 +106,21 @@ class PinholeCamera:
         u = self.fx * (cam_pts[:, 0] / depth) + self.cx
         v = self.fy * (cam_pts[:, 1] / depth) + self.cy
         return np.stack([u, v], axis=1)
+
+    def body_frame_pose(self):
+        """Camera position + orientation in the car's own body frame
+        (x-forward, y-left, z-up, origin at the car), independent of the
+        car's world pose - what a perception node would receive as
+        extrinsics on a real vehicle (no global localization assumed).
+
+        Returns (position (3,), R_body_from_cam (3,3)) where a camera-frame
+        vector v_cam transforms to the body frame via R_body_from_cam @ v_cam.
+        """
+        # extrinsics_at with car pose (0,0,0)/yaw=0 makes "world" and "body
+        # frame" coincide, giving R mapping body -> camera; we want the
+        # inverse (camera -> body), which for a rotation matrix is just
+        # the transpose.
+        R_cam_from_body, _ = self.extrinsics_at(0.0, 0.0, self.mount_height, 0.0)
+        R_body_from_cam = R_cam_from_body.T
+        position = np.array([0.0, 0.0, self.mount_height])
+        return position, R_body_from_cam

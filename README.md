@@ -3,8 +3,10 @@
 A lightweight 2D kinematic driving simulator, built as the testbed for learning
 classical (PID) and RL-based lane-following control. No game engine, no 3D
 assets — just numpy/OpenCV rendering a procedurally generated road and two
-simulated cameras, all wired up over ROS2 topics so classical and RL
-controllers can be dropped in as separate packages later.
+simulated cameras, all wired up over ROS2 topics (including standard
+`CameraInfo`/extrinsics, so a perception node can do real geometry, not just
+look at pixels) so classical and RL controllers can be dropped in as separate
+packages later.
 
 ## Pipeline
 
@@ -13,11 +15,11 @@ controllers can be dropped in as separate packages later.
                     │                    sim_node                    │
                     │                                                  │
 /car/steering ─────▶│  road.py ──▶ car_model.py ──▶ render.py        │──▶ /car/camera/image_raw      (front camera, for lane detection)
-/car/throttle ─────▶│  (RoadGenerator: (CarState:      (renders all    │──▶ /car/player_view/image_raw (3rd-person, drives manual play)
-  both Float32,      │   procedural       yaw + speed,   3 views using  │──▶ /car/chase/image_raw       (map view; visualization only)
-  continuous)        │   curvature +      both integrated  road+car+    │──▶ /car/game_over              (off-road / victory flag)
-                    │   poles+dashes)    from commands)   camera state) │
-                    └──────────────────────────────────────────────┘
+/car/throttle ─────▶│  (RoadGenerator: (CarState:      (renders all    │──▶ /car/camera/camera_info    (front camera intrinsics)
+  both Float32,      │   procedural       yaw + speed,   3 views using  │──▶ /car/camera/extrinsics     (front camera pose, car body frame)
+  continuous)        │   curvature +      both integrated  road+car+    │──▶ /car/player_view/image_raw (3rd-person, drives manual play)
+                    │   poles+dashes)    from commands)   camera state) │──▶ /car/chase/image_raw       (map view; visualization only)
+                    └──────────────────────────────────────────────┘──▶ /car/game_over              (off-road / victory flag)
                                       ▲              ▲
                                       │ steering      │ throttle
                     ┌─────────────────┴──────────────┴─────┐
@@ -174,6 +176,13 @@ pitch/mount configuration:
   infinity, derived purely from the tilt (`cy - fy*tan(pitch)`) — used to
   split sky/grass background and to reject numerically unstable points near
   the vanishing point when rendering.
+- `body_frame_pose()`: the camera's position + rotation matrix **relative to
+  the car's own body frame** (not world) — what `sim_node` publishes on
+  `/car/camera/extrinsics` for a perception node to consume. A real onboard
+  perception stack has no global localization, only "where is the camera
+  relative to me," so this is deliberately car-relative, not world-relative.
+  `quaternion_from_matrix()` (module-level function) converts the rotation
+  matrix to the quaternion the ROS message actually needs.
 
 ### `render.py` — all drawing
 
@@ -242,7 +251,12 @@ player-view). Each tick (`tick_rate` Hz):
 2. `road.update(car.distance_traveled)` — extend/prune the road window.
 3. Check off-road (`|lateral_offset| > road_width/2`) → game over; check
    `distance_traveled >= finish_distance_m` → victory.
-4. Render + publish all three views, plus `/car/game_over`.
+4. Render + publish all three views, plus `/car/game_over`,
+   `/car/camera/camera_info`, and `/car/camera/extrinsics`.
+
+The camera_info/extrinsics messages are static (the camera never moves
+relative to the car) - built once in `__init__`, just republished each tick
+with a fresh header stamp rather than reconstructed from scratch.
 
 **Game rules / freeze behavior**: once off-road or victorious, `sim_node`
 stops all physics, road generation, and per-tick rendering — it renders the
@@ -281,14 +295,17 @@ entirely and just publishes its desired `[-1, 1]` value directly each tick.
 | `/car/steering` | `std_msgs/Float32` | sub | `[-1, 1]`: -1 = full left, +1 = full right, proportional in between |
 | `/car/throttle` | `std_msgs/Float32` | sub | `[-1, 1]`: >0 accelerates, <0 brakes, 0 coasts down under friction |
 | `/car/camera/image_raw` | `sensor_msgs/Image` | pub | front-facing pinhole camera feed, BGR8 |
+| `/car/camera/camera_info` | `sensor_msgs/CameraInfo` | pub | front camera intrinsics (K/D/R/P), zero distortion — a real camera driver's output shape, exact numbers for our ideal pinhole model |
+| `/car/camera/extrinsics` | `geometry_msgs/PoseStamped` | pub | front camera pose **relative to the car's own body frame** (not world) — position + orientation quaternion |
 | `/car/player_view/image_raw` | `sensor_msgs/Image` | pub | pulled-back 3rd-person perspective camera + telemetry HUD — what the manual-play window displays and drives from |
 | `/car/chase/image_raw` | `sensor_msgs/Image` | pub | car-relative map view; visualization only, not used to drive |
 | `/car/game_over` | `std_msgs/Bool` | pub | true once off-road or victory; episode is frozen (see above) |
 | `/car/reset` | `std_srvs/Trigger` | service | respawns the car (at rest) and regenerates the road (same seed) |
 
 Both control axes are continuous and independent — any controller (manual,
-PID, RL) drives the car identically, by publishing to both. All three image
-topics publish every tick unconditionally, regardless of what's driving.
+PID, RL) drives the car identically, by publishing to both. All of the
+`sim_node` publisher topics above publish every tick unconditionally,
+regardless of what's driving.
 
 ## Parameters (`config/sim_params.yaml`)
 
@@ -346,7 +363,12 @@ ros2 launch car_sim sim_only.launch.py [road_seed:=123]
 
 This package is one repo in a multi-repo ROS2 workspace
 (`lane_drive_ws/src/`) — `car_sim` here handles the game/simulation only.
-Classical and RL controllers live in their own separate repos
-(`car_pid_control`, `car_rl_control`), each subscribing to
-`/car/camera/image_raw` and publishing to `/car/steering`/`/car/throttle`,
-so they're interchangeable without touching this package.
+Perception and control live in their own separate repos, each consuming only
+`car_sim`'s published topics, no direct code dependency in either direction:
+- [`detection_lane_opencv`](https://github.com/Bishop-11/detection_lane_opencv) —
+  classical color-segmentation lane detection: subscribes
+  `/car/camera/image_raw` + `camera_info` + `extrinsics`, publishes estimated
+  in-lane position/heading/curvature.
+- `car_pid_control`, `car_rl_control` (planned) — classical and RL
+  controllers, subscribing to detection output (or the raw camera feed
+  directly) and publishing to `/car/steering`/`/car/throttle`.

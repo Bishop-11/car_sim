@@ -2,14 +2,15 @@ import math
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
+from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Float32, Bool
 from std_srvs.srv import Trigger
 from cv_bridge import CvBridge
 
 from car_sim.road import RoadGenerator
 from car_sim.car_model import CarState
-from car_sim.camera_model import PinholeCamera
+from car_sim.camera_model import PinholeCamera, quaternion_from_matrix
 from car_sim import render
 
 # Difficulty is a fixed, code-level setting (not a launch parameter yet):
@@ -22,6 +23,12 @@ class SimNode(Node):
     """Owns car kinematics + the procedural road, and renders three views:
 
     /car/camera/image_raw      - front pinhole camera (for lane detection)
+    /car/camera/camera_info    - front camera intrinsics (sensor_msgs/CameraInfo,
+                                  like a real camera driver would publish)
+    /car/camera/extrinsics     - front camera pose relative to the car's own
+                                  body frame (geometry_msgs/PoseStamped) - not
+                                  world pose; a perception node has no global
+                                  localization, only "where am I on the car"
     /car/player_view/image_raw - pulled-back 3rd-person perspective chase cam
                                   (Need-For-Speed style); this is what manual
                                   play's player window displays and drives from
@@ -73,6 +80,10 @@ class SimNode(Node):
         self.player_camera = PinholeCamera(
             self.player_width_px, self.player_height_px, self.player_hfov_deg,
             self.player_cam_height, self.player_pitch_deg)
+        # Static (camera never moves relative to the car) - built once,
+        # republished each tick with a fresh header stamp.
+        self.camera_info_msg = self._build_camera_info(self.camera, 'car_camera')
+        self.extrinsics_msg = self._build_extrinsics(self.camera, 'car_base_link')
 
         self.steering = 0.0  # [-1, 1]
         self.throttle = 0.0  # [-1, 1]
@@ -82,6 +93,8 @@ class SimNode(Node):
         self._frozen_frames = None
 
         self.camera_pub = self.create_publisher(Image, '/car/camera/image_raw', 10)
+        self.camera_info_pub = self.create_publisher(CameraInfo, '/car/camera/camera_info', 10)
+        self.extrinsics_pub = self.create_publisher(PoseStamped, '/car/camera/extrinsics', 10)
         self.player_view_pub = self.create_publisher(Image, '/car/player_view/image_raw', 10)
         self.chase_pub = self.create_publisher(Image, '/car/chase/image_raw', 10)
         self.game_over_pub = self.create_publisher(Bool, '/car/game_over', 10)
@@ -230,6 +243,10 @@ class SimNode(Node):
 
         stamp = self.get_clock().now().to_msg()
         self._publish_image(self.camera_pub, cam_img, stamp, 'car_camera')
+        self.camera_info_msg.header.stamp = stamp
+        self.camera_info_pub.publish(self.camera_info_msg)
+        self.extrinsics_msg.header.stamp = stamp
+        self.extrinsics_pub.publish(self.extrinsics_msg)
         self._publish_image(self.player_view_pub, player_img, stamp, 'car_player_view')
         self._publish_image(self.chase_pub, chase_img, stamp, 'car_chase')
 
@@ -281,6 +298,43 @@ class SimNode(Node):
         msg.header.stamp = stamp
         msg.header.frame_id = frame_id
         pub.publish(msg)
+
+    def _build_camera_info(self, camera, frame_id):
+        """Ideal-pinhole CameraInfo (zero distortion) - same intrinsics
+        render.py actually uses, so a perception node reprojecting pixels
+        with these numbers gets exact, not approximate, results."""
+        msg = CameraInfo()
+        msg.header.frame_id = frame_id
+        msg.width = camera.width_px
+        msg.height = camera.height_px
+        msg.distortion_model = 'plumb_bob'
+        msg.d = [0.0, 0.0, 0.0, 0.0, 0.0]
+        msg.k = [camera.fx, 0.0, camera.cx,
+                 0.0, camera.fy, camera.cy,
+                 0.0, 0.0, 1.0]
+        msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+        msg.p = [camera.fx, 0.0, camera.cx, 0.0,
+                 0.0, camera.fy, camera.cy, 0.0,
+                 0.0, 0.0, 1.0, 0.0]
+        return msg
+
+    def _build_extrinsics(self, camera, frame_id):
+        """Camera pose relative to the car's own body frame (see
+        PinholeCamera.body_frame_pose - x-forward, y-left, z-up, origin at
+        the car). Fixed for the whole run since the camera is rigidly
+        mounted; only the header stamp changes tick to tick."""
+        position, R_body_from_cam = camera.body_frame_pose()
+        qx, qy, qz, qw = quaternion_from_matrix(R_body_from_cam)
+        msg = PoseStamped()
+        msg.header.frame_id = frame_id
+        msg.pose.position.x = float(position[0])
+        msg.pose.position.y = float(position[1])
+        msg.pose.position.z = float(position[2])
+        msg.pose.orientation.x = qx
+        msg.pose.orientation.y = qy
+        msg.pose.orientation.z = qz
+        msg.pose.orientation.w = qw
+        return msg
 
 
 def main(args=None):
